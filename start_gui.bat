@@ -1,16 +1,16 @@
 @echo off
 chcp 65001 >nul
-title MockGPS è·‘æ­¥æ¨¡æ‹Ÿå™¨
+title MockGPS ÅÜ²½Ä£ÄâÆ÷
 cd /d "%~dp0pc"
 python run_gui.py
 if errorlevel 1 (
     echo.
     echo ====================================
-    echo å¯åŠ¨å¤±è´¥ï¼Œé”™è¯¯ç  %errorlevel%
-    echo è¯·ç¡®è®¤ï¼š
-    echo   1. å·²å®‰è£… Python 3.10+ å¹¶åŠ å…¥ PATH
-    echo   2. å·²æ‰§è¡Œ pip install frida==16.7.19 capstone
-    echo   3. pc/run_gui.py æ–‡ä»¶å­˜åœ¨
+    echo Æô¶¯Ê§°Ü,´íÎóÂë %errorlevel%
+    echo ÇëÈ·ÈÏ:
+    echo   1. ÒÑ°²×° Python 3.10+ ²¢¼ÓÈë PATH
+    echo   2. ÒÑÖ´ĞĞ pip install frida==16.7.19 capstone
+    echo   3. pc\run_gui.py ÎÄ¼ş´æÔÚ
     echo ====================================
     pause
 )
