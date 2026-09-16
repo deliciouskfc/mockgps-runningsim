@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 默认作用域：常见地图与运动 App。用户可在 LSPosed 管理器中增减。 -->
+    <string-array name="xposed_scope">
+        <item>com.codoon.gps</item>          <!-- 咕咚 -->
+        <item>com.autonavi.minimap</item>    <!-- 高德地图 -->
+        <item>com.baidu.BaiduMap</item>      <!-- 百度地图 -->
+        <item>com.tencent.map</item>         <!-- 腾讯地图 -->
+        <item>com.gotokeep.keep</item>       <!-- Keep -->
+        <item>com.thejoyrun</item>           <!-- 悦跑圈 -->
+        <item>im.xingzhe</item>              <!-- 行者 -->
+        <item>com.strava</item>              <!-- Strava -->
+        <item>com.google.android.apps.maps</item> <!-- Google Maps -->
+    </string-array>
+</resources>

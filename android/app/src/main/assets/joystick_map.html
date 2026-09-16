@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<style>
+  html,body{margin:0;padding:0;overflow:hidden;background:#E8E8E8;}
+  canvas{position:absolute;left:0;top:0;}
+  #tip{position:absolute;right:8px;bottom:8px;color:#555;font-size:11px;background:rgba(255,255,255,.6);padding:2px 6px;border-radius:4px;}
+  #zoom{position:absolute;left:10px;bottom:80px;}
+  #zoom button{width:44px;height:44px;font-size:22px;margin-bottom:8px;border:1px solid #bbb;background:rgba(255,255,255,.85);border-radius:6px;}
+  #rot{position:absolute;right:10px;top:40%;display:none;}
+  #rot button{width:44px;height:44px;font-size:20px;margin-bottom:8px;border:1px solid #bbb;background:rgba(255,255,255,.85);border-radius:6px;}
+</style>
+</head>
+<body>
+<canvas id="tiles"></canvas>
+<canvas id="ov"></canvas>
+<div id="tip">高德底图</div>
+<div id="zoom">
+  <button onclick="setZoom(1)">＋</button><br>
+  <button onclick="setZoom(-1)">－</button>
+</div>
+<div id="rot">
+  <button onclick="rotate(15)">⟳</button><br>
+  <button onclick="rotate(-15)">⟲</button>
+</div>
+<script>
+// 注入坐标与高德瓦片同为 GCJ02 坐标系，直接绘制无需转换
+// 标准田径场：弯道半径 36.5m，直道 84.39m，周长 ≈ 398m
+const TILE=256, R=36.5, STRAIGHT=84.39, N1=90, N2=120;
+let Z=17, N=Math.pow(2,Z);
+const tc=document.getElementById('tiles'), tctx=tc.getContext('2d');
+const oc=document.getElementById('ov'), octx=oc.getContext('2d');
+let center=null;   // [lat,lng] 地图中心 = 当前模拟位置
+let ring=null;     // {cx,cy,angle,track}
+let dragging=false, moved=false, lastX=0, lastY=0;
+const tiles=new Map();
+
+function px(la,ln){
+  const s=Math.min(Math.max(Math.sin(la*Math.PI/180),-0.9999),0.9999);
+  const x=(ln+180)/360*N*TILE;
+  const y=(0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*N*TILE;
+  return [x,y];
+}
+function mPerPx(la){return 156543.03392*Math.cos(la*Math.PI/180)/N;}
+function resize(){
+  [tc,oc].forEach(function(c){
+    if(c.width!==innerWidth||c.height!==innerHeight){c.width=innerWidth;c.height=innerHeight;}
+  });
+}
+function tileUrl(x,y){
+  const s=1+((x+y)%4+4)%4;
+  return "https://webrd0"+s+".is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x="+x+"&y="+y+"&z="+Z;
+}
+function ringPts(clat,clng,angleDeg){
+  const L=STRAIGHT, rad=angleDeg*Math.PI/180, pts=[];
+  function add(x,y){ // 跑道局部坐标：x 东、y 北（米）→ 旋转 → 经纬度
+    const xr=x*Math.cos(rad)-y*Math.sin(rad);
+    const yr=x*Math.sin(rad)+y*Math.cos(rad);
+    pts.push([clat+yr/111320.0, clng+xr/(111320.0*Math.cos(clat*Math.PI/180))]);
+  }
+  for(let i=0;i<=N1;i++)add(R,-L/2+L*i/N1);
+  for(let i=1;i<=N2;i++){const a=Math.PI*i/N2;add(R*Math.cos(a),L/2+R*Math.sin(a));}
+  for(let i=1;i<=N1;i++)add(-R,L/2-L*i/N1);
+  for(let i=1;i<=N2;i++){const a=Math.PI+Math.PI*i/N2;add(R*Math.cos(a),-L/2+R*Math.sin(a));}
+  return pts;
+}
+function draw(){
+  if(!center)return;
+  resize();
+  const W=innerWidth,H=innerHeight;
+  const cp=px(center[0],center[1]), cx=cp[0], cy=cp[1];
+  const x0=Math.floor(cx/TILE), y0=Math.floor(cy/TILE);
+  const offX=cx-x0*TILE, offY=cy-y0*TILE;
+  const nx=Math.ceil(W/TILE), ny=Math.ceil(H/TILE);
+  for(let i=-1;i<=nx;i++){
+    for(let j=-1;j<=ny;j++){
+      const tx=x0+i, ty=y0+j;
+      if(ty<0||ty>=N) continue;
+      const sx=Math.round(i*TILE-offX), sy=Math.round(j*TILE-offY);
+      const key=tx+'/'+ty;
+      let img=tiles.get(key);
+      if(!img){
+        img=new Image();
+        img.onload=function(){draw();};
+        img.src=tileUrl(tx,ty);
+        tiles.set(key,img);
+      } else if(img.complete&&img.naturalWidth>0){
+        tctx.drawImage(img,sx,sy);
+      }
+    }
+  }
+  octx.clearRect(0,0,W,H);
+  if(ring&&ring.track.length>1){
+    octx.beginPath();
+    for(let k=0;k<ring.track.length;k++){
+      const p=px(ring.track[k][0],ring.track[k][1]);
+      const sx=p[0]-cx+W/2, sy=p[1]-cy+H/2;
+      if(k===0)octx.moveTo(sx,sy);else octx.lineTo(sx,sy);
+    }
+    octx.closePath();
+    octx.strokeStyle='#FF6D00';
+    octx.lineWidth=6;
+    octx.lineJoin='round';
+    octx.globalAlpha=0.9;
+    octx.stroke();
+    octx.globalAlpha=1;
+  }
+  // 圈起点标记（小圆点）
+  if(ring&&ring.track.length){
+    const sp=px(ring.track[0][0],ring.track[0][1]);
+    const ssx=sp[0]-cx+W/2, ssy=sp[1]-cy+H/2;
+    octx.beginPath();
+    octx.arc(ssx,ssy,5,0,2*Math.PI);
+    octx.fillStyle='#1565C0';
+    octx.fill();
+  }
+}
+// ---- 触摸：tap 选起点生成圈；拖动平移圈 ----
+oc.addEventListener('touchstart',function(e){
+  dragging=true;moved=false;
+  lastX=e.touches[0].clientX;lastY=e.touches[0].clientY;
+},{passive:false});
+oc.addEventListener('touchmove',function(e){
+  if(!dragging)return;
+  const x=e.touches[0].clientX, y=e.touches[0].clientY;
+  const dx=x-lastX, dy=y-lastY;
+  if(Math.abs(dx)>3||Math.abs(dy)>3)moved=true;
+  lastX=x;lastY=y;
+  if(moved&&center){
+    // 拖动 = 平移地图视野（地图跟手）
+    const m=mPerPx(center[0]);
+    center[0]+=dy*m/111320.0;
+    center[1]-=dx*m/(111320.0*Math.cos(center[0]*Math.PI/180));
+    draw();
+  }
+  e.preventDefault();
+},{passive:false});
+oc.addEventListener('touchend',function(){
+  if(dragging&&!moved&&center){
+    // tap：无圈=选起点生成圈；有圈=把圈心移到点击处（重选起点）
+    const W=innerWidth,H=innerHeight,m=mPerPx(center[0]);
+    const clat=center[0]-(lastY-H/2)*m/111320.0;
+    const clng=center[1]+(lastX-W/2)*m/(111320.0*Math.cos(center[0]*Math.PI/180));
+    if(!ring){
+      ring={cx:clat,cy:clng,angle:0,track:ringPts(clat,clng,0)};
+      document.getElementById('rot').style.display='block';
+      if(window.AndroidBridge&&AndroidBridge.onRing)AndroidBridge.onRing();
+    } else {
+      ring.cx=clat; ring.cy=clng;
+      ring.track=ringPts(clat,clng,ring.angle);
+    }
+    draw();
+  }
+  dragging=false;
+});
+function rotate(d){
+  if(!ring)return;
+  ring.angle+=d;
+  ring.track=ringPts(ring.cx,ring.cy,ring.angle);
+  draw();
+}
+window.resetMap=function(la,ln){center=[la,ln];draw();};
+function setZoom(d){
+  Z=Math.min(19,Math.max(13,Z+d));
+  N=Math.pow(2,Z);
+  tiles.clear();
+  draw();
+}
+window.getTrack=function(){
+  if(!ring)return '';
+  return ring.track.map(function(p){return p[0].toFixed(7)+','+p[1].toFixed(7);}).join(';');
+};
+window.addEventListener('resize',draw);
+if(window.AndroidBridge&&AndroidBridge.onReady)AndroidBridge.onReady();
+</script>
+</body>
+</html>

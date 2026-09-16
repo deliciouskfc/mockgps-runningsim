@@ -1,0 +1,74 @@
+# === IDE / 工具缓存 ===
+.trae/
+.vscode/
+.idea/
+GPUCache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# === 日志与临时文件 ===
+*.log
+*.tmp
+*.bak
+pc/replay_live.txt
+pc/replay_log.txt
+pc/mock_run.log
+pc/mock_err.log
+
+# === 调试截图（开发期临时产物）===
+*.png
+pc/track_zoom19*.png
+pc/track_ring*.png
+pc/track400_a_shape.png
+pc/track400_b_shape.png
+pc/joystick_*.png
+pc/run_dist1.png
+pc/amap_replay*.png
+tools/bs_bs.png
+tools/bs_screen.png
+
+# === 二进制 / 第三方私有库（不传仓库）===
+# BlueStacks 传感器 HAL（私有，需用户自行从蓝叠拉取）
+tools/sensors64.so
+tools/sensors.default.so
+# frida-server 二进制（体积大，由用户根据设备架构自行下载）
+tools/frida/
+# adb.exe（版权属 Google，用户自行安装 platform-tools）
+tools/adb36/
+# BlueStacks Root GUI / ReZygisk 模块包（第三方工具，请用户从原项目下载）
+tools/BlueStacksRootGUI.exe
+tools/ReZygisk-rc9.zip
+# MockGPS-Hook.apk（旧版 hook apk，构建产物，由 android/ 模块重新构建）
+tools/MockGPS-Hook.apk
+tools/probe.bin
+
+# === MiFlash / 小米驱动 / ROM（与本仓库主题无关）===
+tools/miflash_unlock/
+tools/miflash_unlock7/
+tools/miflash_unlock-*.zip
+tools/miflash_unlock-new.zip
+tools/miflash_unlock.zip
+tools/usb_driver/
+tools/usb_driver.zip
+tools/fbdrv/
+tools/ofox-marble.zip
+tools/rom/
+
+# === 其他临时产物 ===
+tools/curlpid.txt
+tools/codoon.log
+tools/fix*.log
+tools/drv_install*.log
+
+# === Android 构建产物 ===
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+*.iml
+android/.idea/
+
+# === 本地配置 / 状态（运行时生成，不应入库）===
+# cadence_state.txt 是运行时状态文件，但作为示例保留入库
