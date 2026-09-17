@@ -11,7 +11,9 @@
 - **GPS 路径回放**：沿 `.txt` / `.gpx` / `.kml` 轨迹循环移动，支持位置偏移补偿（修正咕咚显示偏移）
 - **跑步晃动模拟**：左右晃动模拟真人跑步，幅度可调（默认 3.0 m）
 - **速度随机波动**：±N km/h 均值回归，保证平均配速稳定
+- **海拔爬升模拟**：基准海拔上叠加 ±5m 缓坡正弦 + 均值回归随机游走，海拔平滑变化不再恒为 0
 - **HAL 加速度注入**：通过 Frida 以 50Hz 向 BlueStacks 传感器 HAL 的 `/data/bstfifo` 命名管道写入跑步波形（着地峰值 ~18 m/s²）
+- **frida-server 开机自启**：Magisk `service.d` 脚本在 BlueStacks 启动后自动以 root 拉起 frida-server（重启模拟器无需手动操作；GUI 启动时还有一层兜底检测）
 - **传感器规格伪装**：把 BlueStacks 加速度计伪装成 BMI260（±4g / 200Hz / Bosch），让运动 App 认为其可用于计步
 - **步频联动**：GUI 中的步频滑块拖动后 ≤1s 内同步到 HAL 注入器（通过 `cadence_state.txt` 联动）
 - **可视化 GUI**：紫色渐变开始按钮、灰色停止按钮、按来源着色的实时日志
@@ -89,12 +91,21 @@ pip install frida==16.7.19 capstone
 
 ### frida-server 部署
 
+下载 frida-server **16.7.19** for android-x86_64（必须与 PC 端 frida-python 版本一致），重命名为 `frida-server16` 后推送：
+
 ```bash
-# 下载 frida-server 16.7.19 for android-x86_64
-adb push frida-server /data/local/tmp/
-adb shell "chmod 755 /data/local/tmp/frida-server"
-adb shell "su -c '/data/local/tmp/frida-server &'"
+adb push frida-server16 /data/local/tmp/
+adb shell "chmod 755 /data/local/tmp/frida-server16"
 ```
+
+**配置开机自启**（推荐，一次性，之后重启 BlueStacks 无需手动拉起）：
+
+```bash
+adb push tools/frida_boot.sh /data/local/tmp/frida_boot.sh
+adb shell "su -c 'sed s/\r$// /data/local/tmp/frida_boot.sh > /data/adb/service.d/frida-server.sh; chmod 755 /data/adb/service.d/frida-server.sh'"
+```
+
+Magisk/Kitsune 会在开机 late_start service 阶段执行该脚本，等待 `boot_completed` 后以 root 后台启动 frida-server16（找不到 16 版时回退通用名）。GUI 启动时也会检测一次，未运行则自动 `su` 拉起作为兜底。
 
 ### MockGPS 应用安装
 
@@ -169,6 +180,8 @@ python mock_route.py track_final.txt \
 | `--speed-var` | 1.5 | 速度随机波动幅度 ±km/h（均值回归） |
 | `--offset-lat` | 0.0 | 纬度偏移补偿（度）。+北移/-南移 |
 | `--offset-lng` | 0.0 | 经度偏移补偿（度）。+东移/-西移 |
+| `--altitude-base` | 30.0 | 基准海拔（米） |
+| `--altitude-var` | 5.0 | 海拔波动幅度 ±米（缓坡正弦+均值回归），0=关闭 |
 | `--loops` | 1 | 循环次数（0=无限） |
 | `-s` | 自动 | adb 设备序列号 |
 | `--disable-wifi` | off | 运行期间关闭手机 WiFi |

@@ -40,6 +40,29 @@ class Point:
     lng: float
 
 
+class AltitudeSim:
+    """平滑随机海拔：慢周期缓坡正弦 + 均值回归随机游走。
+    整体在 base ± amp 范围内缓慢变化，避免运动 App 里海拔恒为 0。
+    """
+
+    def __init__(self, base: float = 30.0, amp: float = 5.0, period_s: float = 90.0):
+        self.base = base
+        self.amp = amp
+        self.period = period_s
+        self.drift = 0.0
+
+    def at(self, t: float) -> float:
+        if self.amp <= 0:
+            return self.base
+        # 慢正弦缓坡，占幅度 60%
+        slope = 0.6 * self.amp * math.sin(2 * math.pi * t / self.period)
+        # 均值回归随机游走，占幅度 40%
+        self.drift += random.uniform(-1.0, 1.0) * self.amp * 0.02
+        self.drift *= 0.97
+        self.drift = max(-0.4 * self.amp, min(0.4 * self.amp, self.drift))
+        return self.base + slope + self.drift
+
+
 def haversine(p1: Point, p2: Point) -> float:
     """计算两点间球面距离（米）"""
     lat1, lng1 = math.radians(p1.lat), math.radians(p1.lng)
@@ -214,8 +237,10 @@ class SocketPusher:
         s.settimeout(5)
         self.sock = s
 
-    def push(self, lat: float, lng: float, accuracy: float, bearing_deg: float, speed: float) -> bool:
-        line = f"{lat:.8f},{lng:.8f},{accuracy:.2f},{bearing_deg:.2f},{speed:.3f}\n"
+    def push(self, lat: float, lng: float, accuracy: float, bearing_deg: float,
+             speed: float, altitude: float = 0.0) -> bool:
+        line = (f"{lat:.8f},{lng:.8f},{accuracy:.2f},"
+                f"{bearing_deg:.2f},{speed:.3f},{altitude:.2f}\n")
         data = line.encode()
         for attempt in range(2):
             try:
@@ -314,6 +339,10 @@ def main():
                         help="经度偏移补偿（度）。正值=东移，负值=西移。用于修正 App 显示偏移")
     parser.add_argument("--disable-wifi", action="store_true",
                         help="运行期间关闭手机 WiFi（切断地图 SDK 的 WiFi 定位源，迫使其回退到 GPS）")
+    parser.add_argument("--altitude-base", type=float, default=30.0,
+                        help="基准海拔米（默认30）。模拟操场真实海拔，避免运动 App 显示海拔恒为0")
+    parser.add_argument("--altitude-var", type=float, default=5.0,
+                        help="海拔随机波动幅度 ±米（默认5）。缓坡正弦+均值回归，0=关闭海拔模拟")
     args = parser.parse_args()
 
     points = parse_route(args.route)
@@ -332,6 +361,8 @@ def main():
     print(f"速度: {args.speed_kmh:.1f} km/h ({speed_ms:.2f} m/s)")
     print(f"预计单次耗时: {total_time:.0f} s ({total_time / 60:.1f} min)")
     print(f"推送间隔: {args.interval}s，每次前进约 {step_dist:.2f} m")
+    if args.altitude_var > 0:
+        print(f"海拔模拟: 基准 {args.altitude_base:.1f}m，波动 ±{args.altitude_var:.1f}m（缓坡+随机游走）")
 
     if not check_adb(args.device):
         sys.exit(2)
@@ -350,11 +381,17 @@ def main():
         except Exception as e:
             print(f"[WiFi] 关闭失败：{e}")
 
+    # 海拔模拟器（全程连续，跨圈不重置，避免海拔跳变）
+    alt_sim = AltitudeSim(args.altitude_base, args.altitude_var)
+    run_t0 = time.time()
+
     pusher = SocketPusher(SOCKET_PORT)
-    if not pusher.push(points[0].lat + args.offset_lat, points[0].lng + args.offset_lng, args.accuracy, 0.0, speed_ms):
+    alt0 = alt_sim.at(0.0)
+    if not pusher.push(points[0].lat + args.offset_lat, points[0].lng + args.offset_lng,
+                       args.accuracy, 0.0, speed_ms, alt0):
         print("[错误] 无法连接手机 MockGPS 服务，请确认 App 已打开且屏幕亮起")
         sys.exit(4)
-    print("已连接手机 MockGPS 服务（Socket 通道）\n")
+    print(f"已连接手机 MockGPS 服务（Socket 通道，起始海拔 {alt0:.1f}m）\n")
 
     # 跑步晃动参数
     wobble_amp = args.wobble          # 振幅（米）
@@ -418,14 +455,15 @@ def main():
                     d_lat += north_m / 111320.0
                     d_lng += east_m / (111320.0 * math.cos(math.radians(p.lat)))
 
-                ok = pusher.push(p.lat + d_lat, p.lng + d_lng, args.accuracy, b, cur_ms)
+                cur_alt = alt_sim.at(time.time() - run_t0)
+                ok = pusher.push(p.lat + d_lat, p.lng + d_lng, args.accuracy, b, cur_ms, cur_alt)
                 if not ok:
                     print("推送失败，停止。请检查设备连接与应用状态。")
                     return
                 progress = dist / total_dist * 100
                 print(f"  [{loop_idx}] 进度 {progress:5.1f}%  ({dist:8.1f}/{total_dist:.1f}m)  "
                       f"lat={p.lat:.7f} lng={p.lng:.7f} bearing={b:.1f}  "
-                      f"速度={speed_cur:.1f}km/h 步频={cadence}spm 步长={step_len:.2f}m")
+                      f"速度={speed_cur:.1f}km/h 步频={cadence}spm 步长={step_len:.2f}m 海拔={cur_alt:.1f}m")
                 last_point = p
                 dist += cur_step_dist
                 # 校准时间
@@ -437,8 +475,9 @@ def main():
 
             # 终点
             p = points[-1]
-            pusher.push(p.lat, p.lng, args.accuracy, 0.0, speed_ms)
-            print(f"  [{loop_idx}] 到达终点 lat={p.lat:.7f} lng={p.lng:.7f}")
+            end_alt = alt_sim.at(time.time() - run_t0)
+            pusher.push(p.lat, p.lng, args.accuracy, 0.0, speed_ms, end_alt)
+            print(f"  [{loop_idx}] 到达终点 lat={p.lat:.7f} lng={p.lng:.7f} 海拔={end_alt:.1f}m")
 
             if args.once:
                 break

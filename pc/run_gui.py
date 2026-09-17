@@ -59,6 +59,8 @@ DEFAULTS = {
     "wobble": 3.0,
     "offset_lat": -0.000728,
     "offset_lng": 0.001907,
+    "altitude_base": 30.0,
+    "altitude_var": 5.0,
     "interval": 1.0,
     "loops": 0,
     "device": "emulator-5554",
@@ -194,6 +196,8 @@ class MockGPSGUI(tk.Tk):
         self.var_wobble = tk.StringVar(value=str(DEFAULTS["wobble"]))
         self.var_offset_lat = tk.StringVar(value=str(DEFAULTS["offset_lat"]))
         self.var_offset_lng = tk.StringVar(value=str(DEFAULTS["offset_lng"]))
+        self.var_altitude_base = tk.StringVar(value=str(DEFAULTS["altitude_base"]))
+        self.var_altitude_var = tk.StringVar(value=str(DEFAULTS["altitude_var"]))
         self.var_interval = tk.StringVar(value=str(DEFAULTS["interval"]))
         self.var_loops = tk.StringVar(value=str(DEFAULTS["loops"]))
         self.var_device = tk.StringVar(value=DEFAULTS["device"])
@@ -282,6 +286,12 @@ class MockGPSGUI(tk.Tk):
         ttk.Entry(r, textvariable=self.var_interval, width=6).pack(side="left", padx=4)
         ttk.Label(r, text="  循环(0=无限)：").pack(side="left")
         ttk.Entry(r, textvariable=self.var_loops, width=6).pack(side="left", padx=4)
+
+        ralt = ttk.Frame(adv); ralt.pack(fill="x", pady=2)
+        ttk.Label(ralt, text="基准海拔(m)：").pack(side="left")
+        ttk.Entry(ralt, textvariable=self.var_altitude_base, width=6).pack(side="left", padx=4)
+        ttk.Label(ralt, text="  海拔波动(±m，0=关闭)：").pack(side="left")
+        ttk.Entry(ralt, textvariable=self.var_altitude_var, width=6).pack(side="left", padx=4)
 
         r2 = ttk.Frame(adv); r2.pack(fill="x", pady=2)
         ttk.Label(r2, text="纬度偏移：").pack(side="left")
@@ -491,6 +501,8 @@ class MockGPSGUI(tk.Tk):
             wobble = float(self.var_wobble.get())
             offset_lat = float(self.var_offset_lat.get())
             offset_lng = float(self.var_offset_lng.get())
+            altitude_base = float(self.var_altitude_base.get())
+            altitude_var = float(self.var_altitude_var.get())
             interval = float(self.var_interval.get())
             loops = int(self.var_loops.get())
             cadence = int(self.var_cadence.get())
@@ -552,6 +564,8 @@ class MockGPSGUI(tk.Tk):
                      "--wobble", f"{wobble}",
                      "--offset-lat", f"{offset_lat}",
                      "--offset-lng", f"{offset_lng}",
+                     "--altitude-base", f"{altitude_base}",
+                     "--altitude-var", f"{altitude_var}",
                      "--interval", f"{interval}",
                      "--loops", f"{loops}",
                      "-s", device]

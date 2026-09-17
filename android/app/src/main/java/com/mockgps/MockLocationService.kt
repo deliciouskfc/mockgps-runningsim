@@ -275,7 +275,9 @@ class MockLocationService : Service() {
                         val acc = parts[2].trim().toFloat()
                         val bear = parts[3].trim().toFloat()
                         val spd = parts[4].trim().toFloat()
-                        pushLocation(lat, lng, acc, bear, spd)
+                        // 第 6 字段为海拔（米）；旧版 PC 端只发 5 字段时默认 0
+                        val alt = if (parts.size >= 6) parts[5].trim().toDouble() else 0.0
+                        pushLocation(lat, lng, acc, bear, spd, alt)
                     } catch (e: Exception) {
                         Log.e(TAG, "解析坐标失败: $line", e)
                     }

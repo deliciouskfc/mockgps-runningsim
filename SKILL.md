@@ -26,7 +26,7 @@ Agent 启动前**必须逐项确认**：
 ```
 □ BlueStacks 5.22+ 已安装，Pie64 实例运行中（adb devices 能看到 emulator-5554）
 □ BlueStacks 已 root（adb shell su -c id 返回 uid=0）
-□ frida-server 16.7.19 x86_64 在设备上以 root 运行（frida-ps -U 能列出进程）
+□ frida-server 16.7.19 x86_64 已部署到 /data/local/tmp/frida-server16，并配置开机自启（tools/frida_boot.sh → /data/adb/service.d/frida-server.sh）。重启模拟器后自动运行；GUI 启动时还会检测并兜底拉起（frida-ps -U 能列出进程即就绪）
 □ PC 端 pip install frida==16.7.19 capstone
 □ MockGPS APK 已安装并被设为「模拟位置应用」
 □ 咕咚 com.codoon.gps 已安装并登录
@@ -176,7 +176,10 @@ GUI 在「高级参数」折叠区里调整。
 | 步频状态文件（联动信道） | `pc/cadence_state.txt` |
 | 默认操场轨迹 | `pc/track_final.txt` |
 | Android MockGPS 服务 | `android/app/src/main/java/com/mockgps/MockLocationService.kt` |
+| frida-server 开机自启脚本 | `tools/frida_boot.sh`（安装到设备 `/data/adb/service.d/frida-server.sh`） |
 | HAL 反汇编工具 | `tools/disasm_hal.py` |
+
+**GPS Socket 协议**（PC → Android:17890，每行）：`纬度,经度,精度,方位,速度,海拔`，如 `22.6877725,114.2034827,5.00,90.00,3.333,32.75`；`QUIT` 停止服务。Android 端兼容缺第 6 字段（海拔默认 0）。
 
 ## 关键参数表
 
@@ -186,6 +189,8 @@ GUI 在「高级参数」折叠区里调整。
 | 速度波动 | ±1.5 km/h | 均值回归保证平均配速 |
 | 步频 | 168 spm | 典型跑步步频 160-180 |
 | 晃动幅度 | 3.0 m | 跑步左右晃动模拟真人 |
+| 基准海拔 | 30 m | 避免运动 App 海拔恒为 0 |
+| 海拔波动 | ±5 m | 90s 周期缓坡正弦(60%)+均值回归游走(40%)，平滑变化；0=关闭 |
 | 推送间隔 | 1.0 s | GPS 坐标推送频率 |
 | 纬度偏移 | -0.000728 | 修正咕咚显示偏移（港中深操场校准值） |
 | 经度偏移 | 0.001907 | 同上 |
