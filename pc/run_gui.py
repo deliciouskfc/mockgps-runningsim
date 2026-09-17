@@ -499,6 +499,15 @@ class MockGPSGUI(tk.Tk):
             messagebox.showerror("参数错误", f"参数解析失败：{e}")
             return
 
+        # 0. 确保设备上 frida-server 运行（HAL/伪装需要；BlueStacks 重启后会丢失）
+        if self.var_enable_hal.get() or self.var_enable_camo.get():
+            if not self._ensure_frida_server(device):
+                if not messagebox.askyesno(
+                        "frida-server 未就绪",
+                        "无法在设备上启动 frida-server，加速度注入/传感器伪装将失败。\n\n"
+                        "是否仍要继续启动（仅运行 GPS 回放）？"):
+                    return
+
         # 1. 先写 cadence_state.txt 为 running=1 + 用户步频
         self._write_cadence_state(running=1, cadence=cadence)
         self._log("gui", f"已写入 cadence_state.txt: running=1, cadence={cadence}")
@@ -701,6 +710,54 @@ class MockGPSGUI(tk.Tk):
             self._log("gui", "提示：未找到 adb，可能无法自动唤醒设备")
         except Exception as e:
             self._log("gui", f"adb 检测异常：{e}")
+
+    def _ensure_frida_server(self, device):
+        """检查设备上 frida-server 是否运行；未运行则以 root 后台拉起。
+        优先 frida-server16（匹配 frida-python 16.x），回退 frida-server。
+        返回 True 表示就绪。
+        """
+        adb = ["adb", "-s", device] if device else ["adb"]
+
+        def run_shell(cmd, timeout=6):
+            return subprocess.run(adb + ["shell", cmd],
+                                  capture_output=True, text=True, timeout=timeout)
+
+        # 已在运行？
+        for name in ("frida-server16", "frida-server"):
+            try:
+                r = run_shell(f"pgrep -x {name}")
+                if r.returncode == 0 and r.stdout.strip():
+                    self._log("gui",
+                              f"frida-server 已运行（{name}, pid={r.stdout.strip().splitlines()[0]}）")
+                    return True
+            except Exception:
+                continue
+
+        # 未运行，尝试以 root 拉起
+        self._log("gui", "frida-server 未运行，尝试以 root 后台拉起...")
+        for name in ("frida-server16", "frida-server"):
+            try:
+                if run_shell(f"ls /data/local/tmp/{name}").returncode != 0:
+                    continue
+                # su 后台启动并脱离 adb shell（nohup + &，重定向避免阻塞）
+                run_shell(
+                    f"su -c 'chmod 755 /data/local/tmp/{name}; "
+                    f"nohup /data/local/tmp/{name} >/dev/null 2>&1 &'",
+                    timeout=8)
+                # 等待 daemon 就绪
+                for _ in range(6):
+                    time.sleep(1)
+                    r = run_shell(f"pgrep -x {name}")
+                    if r.returncode == 0 and r.stdout.strip():
+                        self._log("gui",
+                                  f"frida-server 已拉起（{name}, pid={r.stdout.strip().splitlines()[0]}）")
+                        return True
+            except Exception as e:
+                self._log("error", f"拉起 {name} 异常：{e}")
+
+        self._log("error",
+                  "无法启动 frida-server：请确认设备已 root，且 /data/local/tmp/ 下有 frida-server16")
+        return False
 
     # ---------- 关窗 ----------
 
