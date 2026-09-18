@@ -59,7 +59,7 @@ DEFAULTS = {
     "wobble": 3.0,
     "offset_lat": -0.000728,
     "offset_lng": 0.001907,
-    "altitude_base": 30.0,
+    "altitude_base": 47.0,
     "altitude_var": 5.0,
     "interval": 1.0,
     "loops": 0,

@@ -52,26 +52,29 @@ class Point:
 
 
 class AltitudeSim:
-    """平滑随机海拔：慢周期缓坡正弦 + 均值回归随机游走。
-    整体在 base ± amp 范围内缓慢变化，避免运动 App 里海拔恒为 0。
+    """纯随机游走海拔：无周期性正弦，仅靠强均值回归 + 限幅，
+    在 base ± amp 范围内自然漂移。每步增量小且随机方向，
+    整体呈真人跑步在起伏路面的不规则海拔变化。
     """
 
-    def __init__(self, base: float = 30.0, amp: float = 5.0, period_s: float = 90.0):
+    def __init__(self, base: float = 47.0, amp: float = 5.0):
         self.base = base
         self.amp = amp
-        self.period = period_s
-        self.drift = 0.0
+        self.drift = 0.0  # 当前相对 base 的偏移
 
     def at(self, t: float) -> float:
         if self.amp <= 0:
             return self.base
-        # 慢正弦缓坡，占幅度 60%
-        slope = 0.6 * self.amp * math.sin(2 * math.pi * t / self.period)
-        # 均值回归随机游走，占幅度 40%
-        self.drift += random.uniform(-1.0, 1.0) * self.amp * 0.02
-        self.drift *= 0.97
-        self.drift = max(-0.4 * self.amp, min(0.4 * self.amp, self.drift))
-        return self.base + slope + self.drift
+        # 随机步长增量（±0.6m/步），方向完全随机
+        self.drift += random.uniform(-1.0, 1.0) * 0.6
+        # 弱均值回归（每步衰减 1%），允许 drift 自由探索 ±amp 空间
+        self.drift *= 0.99
+        # 硬限幅在 ±amp 内
+        if self.drift > self.amp:
+            self.drift = self.amp
+        elif self.drift < -self.amp:
+            self.drift = -self.amp
+        return self.base + self.drift
 
 
 def haversine(p1: Point, p2: Point) -> float:
@@ -353,10 +356,10 @@ def main():
                         help="经度偏移补偿（度）。正值=东移，负值=西移。用于修正 App 显示偏移")
     parser.add_argument("--disable-wifi", action="store_true",
                         help="运行期间关闭手机 WiFi（切断地图 SDK 的 WiFi 定位源，迫使其回退到 GPS）")
-    parser.add_argument("--altitude-base", type=float, default=30.0,
-                        help="基准海拔米（默认30）。模拟操场真实海拔，避免运动 App 显示海拔恒为0")
+    parser.add_argument("--altitude-base", type=float, default=47.0,
+                        help="基准海拔米（默认47）。模拟操场真实海拔，避免运动 App 显示海拔恒为0")
     parser.add_argument("--altitude-var", type=float, default=5.0,
-                        help="海拔随机波动幅度 ±米（默认5）。缓坡正弦+均值回归，0=关闭海拔模拟")
+                        help="海拔随机波动幅度 ±米（默认5）。纯随机游走+均值回归，0=关闭海拔模拟")
     args = parser.parse_args()
 
     points = parse_route(args.route)
