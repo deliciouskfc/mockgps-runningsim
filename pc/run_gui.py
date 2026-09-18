@@ -527,6 +527,12 @@ class MockGPSGUI(tk.Tk):
         py = sys.executable
         create_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
 
+        # 强制子进程 stdout/stderr 输出 UTF-8，避免 Windows 中文系统默认 GBK 导致
+        # GUI 端 encoding="utf-8" 读 PIPE 时报 "codec can't decode byte 0xcf"
+        sub_env = os.environ.copy()
+        sub_env["PYTHONUTF8"] = "1"
+        sub_env["PYTHONIOENCODING"] = "utf-8:replace"
+
         # 2. 启动 HAL 加速度注入
         if self.var_enable_hal.get():
             try:
@@ -535,7 +541,7 @@ class MockGPSGUI(tk.Tk):
                     cwd=HERE,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, bufsize=1, encoding="utf-8",
-                    creationflags=create_flags)
+                    env=sub_env, creationflags=create_flags)
                 self.procs["hal"] = p
                 self._start_reader(p, "hal")
                 self._log("gui", f"已启动 HAL 加速度注入 (pid={p.pid})")
@@ -550,7 +556,7 @@ class MockGPSGUI(tk.Tk):
                     cwd=HERE,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, bufsize=1, encoding="utf-8",
-                    creationflags=create_flags)
+                    env=sub_env, creationflags=create_flags)
                 self.procs["camo"] = p
                 self._start_reader(p, "camo")
                 self._log("gui", f"已启动传感器伪装 (pid={p.pid})")
@@ -574,7 +580,7 @@ class MockGPSGUI(tk.Tk):
                 route_cmd, cwd=HERE,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1, encoding="utf-8",
-                creationflags=create_flags)
+                env=sub_env, creationflags=create_flags)
             self.procs["route"] = p
             self._start_reader(p, "route")
             self._log("gui", f"已启动 GPS 回放 (pid={p.pid}) 速度={speed_kmh}km/h 波动={speed_var}")

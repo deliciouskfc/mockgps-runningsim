@@ -29,6 +29,17 @@ import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
+# 强制 stdout/stderr UTF-8 输出，避免 Windows 中文系统默认 GBK 编码导致
+# GUI 端 Popen(encoding="utf-8") 读 PIPE 时报 decode 错误
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+# 子进程调用也用 UTF-8 decode，避免 adb 输出中文时被系统编码误伤
+_SUBPROC_ENC = "utf-8"
+
 # 默认速度：5 分钟一公里 = 12 km/h
 DEFAULT_SPEED_KMH = 12.0
 EARTH_RADIUS_M = 6371000.0
@@ -215,7 +226,8 @@ def setup_forward(device: str = None) -> bool:
     """建立 adb 端口转发：电脑 127.0.0.1:17890 -> 手机 17890"""
     cmd = adb_base(device) + ["forward", f"tcp:{SOCKET_PORT}", f"tcp:{SOCKET_PORT}"]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding=_SUBPROC_ENC, errors="replace", timeout=5)
         if r.returncode == 0:
             return True
         print(f"[错误] adb forward 失败：{r.stderr.strip()}")
@@ -272,7 +284,8 @@ def check_adb(device: str = None):
     """检查 adb 与设备连接"""
     cmd = adb_base(device) + ["get-state"]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding=_SUBPROC_ENC, errors="replace", timeout=5)
         if r.returncode == 0 and "device" in r.stdout:
             return True
         print(f"[错误] 设备未就绪：{r.stdout.strip()} {r.stderr.strip()}")
@@ -285,7 +298,8 @@ def check_adb(device: str = None):
 
 def _adb_shell(device, args):
     subprocess.run(adb_base(device) + ["shell"] + args,
-                   capture_output=True, text=True, timeout=8)
+                   capture_output=True, text=True,
+                   encoding=_SUBPROC_ENC, errors="replace", timeout=8)
 
 
 def prepare_device(device: str = None):
@@ -374,7 +388,8 @@ def main():
     if args.disable_wifi:
         try:
             r = subprocess.run(adb_base(args.device) + ["shell", "settings", "get", "wifi_on"],
-                               capture_output=True, text=True, timeout=5)
+                               capture_output=True, text=True,
+                               encoding=_SUBPROC_ENC, errors="replace", timeout=5)
             wifi_was_on = (r.stdout.strip() == "1")
             _adb_shell(args.device, ["svc", "wifi", "disable"])
             print("[WiFi] 已关闭手机 WiFi（切断地图 WiFi 定位源，结束后自动恢复）")

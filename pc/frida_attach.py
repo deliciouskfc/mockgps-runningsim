@@ -5,6 +5,14 @@
 """
 import sys, time, subprocess, frida
 
+# 强制 UTF-8 输出
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 PKG = "com.codoon.gps"
 
 def main():

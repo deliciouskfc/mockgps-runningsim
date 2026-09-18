@@ -5,6 +5,14 @@
 """
 import os, time, sys, frida
 
+# 强制 UTF-8 输出，避免 Windows 中文系统默认 GBK 导致 GUI 读 PIPE 报错
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 JS = os.path.join(HERE, "frida_hal_inject.js")
 STATE = os.path.join(HERE, "cadence_state.txt")
