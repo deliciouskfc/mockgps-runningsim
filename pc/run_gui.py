@@ -742,7 +742,44 @@ class MockGPSGUI(tk.Tk):
             return subprocess.run(adb + ["shell", cmd],
                                   capture_output=True, text=True, timeout=timeout)
 
-        # 已在运行？
+        # === 第一步：确保设备在线 + boot 完成 ===
+        self._log("gui", "正在等待设备就绪...")
+        try:
+            r = subprocess.run(adb + ["wait-for-device"], timeout=60)
+            if r.returncode != 0:
+                self._log("error", "设备未就绪：adb wait-for-device 超时")
+                return False
+        except Exception as e:
+            self._log("error", f"设备连接异常：{e}")
+            return False
+
+        # 等 boot_completed（最多 90s）
+        boot_ok = False
+        for _ in range(30):
+            try:
+                r = run_shell("getprop sys.boot_completed", timeout=5)
+                if r.returncode == 0 and r.stdout.strip() == "1":
+                    boot_ok = True
+                    break
+            except Exception:
+                pass
+            time.sleep(3)
+        if not boot_ok:
+            self._log("error", "设备 boot 未完成，无法启动 frida-server")
+            return False
+        self._log("gui", "设备已就绪（boot_completed=1）")
+
+        # 检查 su 权限
+        try:
+            r = run_shell("su -c id", timeout=5)
+            if r.returncode != 0 or "uid=0" not in r.stdout:
+                self._log("error", "设备无 root 权限（su 返回非 uid=0），frida-server 无法启动")
+                return False
+        except Exception as e:
+            self._log("error", f"su 检查异常：{e}")
+            return False
+
+        # === 第二步：frida-server 已在运行？ ===
         for name in ("frida-server16", "frida-server"):
             try:
                 r = run_shell(f"pgrep -x {name}")
