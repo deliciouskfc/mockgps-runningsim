@@ -716,14 +716,44 @@ class MockGPSGUI(tk.Tk):
             self.after(1000, self._check_procs_alive)
 
     def _check_device(self):
-        """启动时检查 adb 设备是否在线"""
+        """启动时检查 adb 设备是否在线，没在线就自动 connect BlueStacks 默认端口。
+        连上后把实际设备名同步到 GUI 设备字段（避免 emulator-5554 与 127.0.0.1:5555 不匹配）。
+        """
         try:
             r = subprocess.run(["adb", "devices"], capture_output=True,
-                                text=True, timeout=3)
+                                text=True, encoding="utf-8", errors="replace", timeout=3)
             lines = [l for l in r.stdout.splitlines()
                      if l and not l.startswith("List") and "device" in l]
+            if not lines:
+                # 未检测到设备，自动尝试连接 BlueStacks 常用 ADB 端口
+                # BlueStacks 5 默认 5555；多开实例为 5556/5557...
+                self._log("gui", "未检测到 adb 设备，尝试自动连接 BlueStacks...")
+                for port in (5555, 5556, 5557, 5558, 5565):
+                    try:
+                        rc = subprocess.run(
+                            ["adb", "connect", f"127.0.0.1:{port}"],
+                            capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=5)
+                        if "connected" in rc.stdout:
+                            self._log("gui", f"已连接 127.0.0.1:{port}")
+                            # 重新枚举设备
+                            r = subprocess.run(["adb", "devices"], capture_output=True,
+                                                text=True, encoding="utf-8",
+                                                errors="replace", timeout=3)
+                            lines = [l for l in r.stdout.splitlines()
+                                     if l and not l.startswith("List") and "device" in l]
+                            break
+                    except Exception:
+                        continue
+
             if lines:
-                self._log("gui", f"adb 设备在线：{lines[0].strip()}")
+                # 取设备名（第一列），同步到 GUI 设备字段
+                dev_name = lines[0].split()[0]
+                self._log("gui", f"adb 设备在线：{dev_name}")
+                cur = self.var_device.get().strip()
+                if cur != dev_name:
+                    self.var_device.set(dev_name)
+                    self._log("gui", f"设备字段已自动更新：{cur} → {dev_name}")
             else:
                 self._log("gui", "提示：未检测到 adb 设备，请确认 BlueStacks 已启动")
         except FileNotFoundError:
@@ -740,10 +770,44 @@ class MockGPSGUI(tk.Tk):
 
         def run_shell(cmd, timeout=6):
             return subprocess.run(adb + ["shell", cmd],
-                                  capture_output=True, text=True, timeout=timeout)
+                                  capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=timeout)
 
         # === 第一步：确保设备在线 + boot 完成 ===
         self._log("gui", "正在等待设备就绪...")
+        # 先尝试 adb devices，没设备就自动 connect BlueStacks 端口
+        try:
+            r = subprocess.run(["adb", "devices"], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=3)
+            lines = [l for l in r.stdout.splitlines()
+                     if l and not l.startswith("List") and "device" in l]
+            if not lines:
+                self._log("gui", "未检测到设备，尝试自动连接 BlueStacks ADB 端口...")
+                for port in (5555, 5556, 5557, 5558, 5565):
+                    try:
+                        rc = subprocess.run(
+                            ["adb", "connect", f"127.0.0.1:{port}"],
+                            capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=5)
+                        if "connected" in rc.stdout:
+                            self._log("gui", f"已连接 127.0.0.1:{port}")
+                            # 同步设备名
+                            r2 = subprocess.run(["adb", "devices"], capture_output=True,
+                                                 text=True, encoding="utf-8",
+                                                 errors="replace", timeout=3)
+                            new_lines = [l for l in r2.stdout.splitlines()
+                                         if l and not l.startswith("List") and "device" in l]
+                            if new_lines:
+                                dev_name = new_lines[0].split()[0]
+                                self.var_device.set(dev_name)
+                                device = dev_name
+                                adb = ["adb", "-s", device]
+                            break
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
         try:
             r = subprocess.run(adb + ["wait-for-device"], timeout=60)
             if r.returncode != 0:
