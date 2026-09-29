@@ -552,7 +552,7 @@ class MockGPSGUI(tk.Tk):
         if self.var_enable_camo.get():
             try:
                 p = subprocess.Popen(
-                    [py, ATTACH_RUNNER, CAMOUFLAGE_JS, None, device],
+                    [py, ATTACH_RUNNER, CAMOUFLAGE_JS, "0", device],
                     cwd=HERE,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, bufsize=1, encoding="utf-8",
