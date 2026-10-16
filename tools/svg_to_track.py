@@ -19,7 +19,7 @@ M_PER_DEG_LAT = 111320.0
 M_PER_DEG_LNG = 111320.0 * math.cos(math.radians(CENTER_LAT))  # ~102730
 
 # 龙形目标路径总长度（米）。不再按高度限制，直接按总长缩放铺满跑道。
-TARGET_TOTAL_M = 2000.0
+TARGET_TOTAL_M = 15000.0
 
 
 def parse_svg_path(d):
