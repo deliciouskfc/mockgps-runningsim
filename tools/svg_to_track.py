@@ -238,23 +238,44 @@ def main():
 
     final_subpaths = ordered
 
-    # 写轨迹文件
+    # ---------- 一笔画：段间用直线插值连接，合并为单段连续路径 ----------
+    def interpolate_bridge(p1, p2, step_px=2.0):
+        """在两点间按 step_px 间隔插入直线点（不含端点）。"""
+        d = math.hypot(p2[0]-p1[0], p2[1]-p1[1])
+        if d < step_px:
+            return []
+        n = int(d / step_px)
+        pts = []
+        for k in range(1, n):
+            t = k / n
+            pts.append((p1[0] + t*(p2[0]-p1[0]), p1[1] + t*(p2[1]-p1[1])))
+        return pts
+
+    continuous = []
+    for i, seg in enumerate(final_subpaths):
+        continuous.extend(seg)
+        if i < len(final_subpaths) - 1:
+            bridge = interpolate_bridge(seg[-1], final_subpaths[i+1][0], step_px=2.0)
+            continuous.extend(bridge)
+
+    print(f"\n一笔画合并: {len(final_subpaths)} 段 → 单段 {len(continuous)} 点")
+    # 统计总长度
+    total_px = sum(math.hypot(continuous[i][0]-continuous[i-1][0],
+                              continuous[i][1]-continuous[i-1][1])
+                   for i in range(1, len(continuous)))
+    print(f"路径总长: {total_px*scale:.1f}m ({total_px*scale/1000:.2f}km)")
+
+    # 写轨迹文件（单段，无 PAUSE）
     with open(OUT_PATH, "w", encoding="utf-8") as f:
-        f.write(f"# 奶龙轨迹 - 共 {len(final_subpaths)} 段，段间 PAUSE 需用户交互继续\n")
-        f.write(f"# 圆心 {CENTER_LAT}, {CENTER_LNG}  缩放 {scale:.4f}m/px  尺寸 {w*scale:.0f}x{h*scale:.0f}m\n")
-        f.write(f"# 段已按最近邻排序，段间跳跃最小化\n")
-        for idx, sp in enumerate(final_subpaths):
-            f.write(f"\n# === 段 {idx+1}/{len(final_subpaths)} ({len(sp)} 点) ===\n")
-            for (x, y) in sp:
-                lat, lng = svg_to_gps(x, y, cx_svg, cy_svg, scale)
-                f.write(f"{lat:.8f},{lng:.8f}\n")
-            if idx < len(final_subpaths) - 1:
-                f.write("PAUSE\n")
+        f.write(f"# 奶龙轨迹 - 一笔画单段连续路径\n")
+        f.write(f"# 圆心 {CENTER_LAT}, {CENTER_LNG}  缩放 {scale:.5f}m/px  总长 {total_px*scale:.0f}m\n")
+        f.write(f"# 段间用直线插值连接，无 PAUSE 暂停\n")
+        for (x, y) in continuous:
+            lat, lng = svg_to_gps(x, y, cx_svg, cy_svg, scale)
+            f.write(f"{lat:.8f},{lng:.8f}\n")
 
     print(f"\n已写入 {OUT_PATH}")
-    # 统计
-    total = sum(len(sp) for sp in final_subpaths)
-    print(f"总点数: {total}  暂停次数: {len(final_subpaths)-1}")
+    print(f"总点数: {len(continuous)}  无暂停")
 
 
 if __name__ == "__main__":
