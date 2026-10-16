@@ -18,8 +18,8 @@ CENTER_LNG = 114.2029422
 M_PER_DEG_LAT = 111320.0
 M_PER_DEG_LNG = 111320.0 * math.cos(math.radians(CENTER_LAT))  # ~102730
 
-# 龙形在跑道内的目标高度（米）。跑道直径 ~127m，留边距取 120m
-TARGET_HEIGHT_M = 120.0
+# 龙形目标路径总长度（米）。不再按高度限制，直接按总长缩放铺满跑道。
+TARGET_TOTAL_M = 2000.0
 
 
 def parse_svg_path(d):
@@ -118,8 +118,14 @@ def main():
     cy_svg = (min_y + max_y) / 2
     print(f"SVG 边界: {min_x:.0f},{min_y:.0f} ~ {max_x:.0f},{max_y:.0f}  尺寸 {w:.0f}x{h:.0f}")
 
-    scale = TARGET_HEIGHT_M / h
-    print(f"缩放比例: {scale:.4f} m/px  (龙高 {h*scale:.1f}m, 宽 {w*scale:.1f}m)")
+    # 按目标总路径长度反推缩放
+    svg_total_px = 0.0
+    for sp in subpaths:
+        for i in range(1, len(sp)):
+            svg_total_px += math.hypot(sp[i][0]-sp[i-1][0], sp[i][1]-sp[i-1][1])
+    scale = TARGET_TOTAL_M / svg_total_px
+    print(f"SVG 路径总长: {svg_total_px:.0f}px → 缩放 {scale:.5f}m/px → 目标 {TARGET_TOTAL_M:.0f}m")
+    print(f"龙形尺寸: 高 {h*scale:.1f}m, 宽 {w*scale:.1f}m")
 
     # 识别眼睛子路径：Y 中心在头部（y_center < 350，嘴在 y~370）且尺寸合理
     eye_candidates = []
