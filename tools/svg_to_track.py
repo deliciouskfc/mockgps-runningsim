@@ -18,8 +18,8 @@ CENTER_LNG = 114.2029422
 M_PER_DEG_LAT = 111320.0
 M_PER_DEG_LNG = 111320.0 * math.cos(math.radians(CENTER_LAT))  # ~102730
 
-# 龙形在跑道内的目标高度（米）。跑道直径 ~127m，留边距取 110m
-TARGET_HEIGHT_M = 110.0
+# 龙形在跑道内的目标高度（米）。跑道直径 ~127m，留边距取 120m
+TARGET_HEIGHT_M = 120.0
 
 
 def parse_svg_path(d):
@@ -180,10 +180,63 @@ def main():
         final_subpaths.append(make_circle(*right))
     print(f"最终子路径数: {len(final_subpaths)}")
 
+    # ---------- 段排序优化：旋转闭合路径起点 + 贪心最近邻，最小化段间跳跃 ----------
+    def dist_px(a, b):
+        return math.hypot(a[0]-b[0], a[1]-b[1])
+
+    def rotate_to_nearest(seg, target_pt):
+        """把闭合路径旋转，使离 target_pt 最近的点成为起点。"""
+        if len(seg) < 2:
+            return seg
+        best_i = min(range(len(seg)), key=lambda i: dist_px(seg[i], target_pt))
+        return seg[best_i:] + seg[:best_i]
+
+    # 贪心：从离圆心最近的段开始，每次选离当前终点最近的段
+    ordered = []
+    remaining = list(range(len(final_subpaths)))
+    # 起点选离全局中心最近的段（并旋转到离中心最近的点）
+    center_pt = (cx_svg, cy_svg)
+    first_idx = min(remaining,
+                    key=lambda i: min(dist_px(p, center_pt) for p in final_subpaths[i]))
+    first_seg = rotate_to_nearest(final_subpaths[first_idx], center_pt)
+    ordered.append(first_seg)
+    remaining.remove(first_idx)
+    cur_pos = first_seg[-1]  # 段终点（闭合路径=起点，但旋转后末点是原起点）
+
+    while remaining:
+        # 对每个候选段，旋转到离 cur_pos 最近的点，选跳跃最小的
+        best_i = None
+        best_jump = float("inf")
+        best_seg = None
+        for i in remaining:
+            seg = final_subpaths[i]
+            # 找离 cur_pos 最近的点作为新起点
+            rot = rotate_to_nearest(seg, cur_pos)
+            jump = dist_px(rot[0], cur_pos)
+            if jump < best_jump:
+                best_jump = jump
+                best_i = i
+                best_seg = rot
+        ordered.append(best_seg)
+        remaining.remove(best_i)
+        cur_pos = best_seg[-1]
+
+    # 打印排序后的段间跳跃
+    print(f"\n排序后段间跳跃（缩放后米）:")
+    total_jump = 0
+    for i in range(len(ordered)-1):
+        jm = dist_px(ordered[i][-1], ordered[i+1][0]) * scale
+        total_jump += jm
+        print(f"  段{i+1}末 → 段{i+2}首: {jm:.1f}m")
+    print(f"  总跳跃: {total_jump:.1f}m")
+
+    final_subpaths = ordered
+
     # 写轨迹文件
     with open(OUT_PATH, "w", encoding="utf-8") as f:
         f.write(f"# 奶龙轨迹 - 共 {len(final_subpaths)} 段，段间 PAUSE 需用户交互继续\n")
         f.write(f"# 圆心 {CENTER_LAT}, {CENTER_LNG}  缩放 {scale:.4f}m/px  尺寸 {w*scale:.0f}x{h*scale:.0f}m\n")
+        f.write(f"# 段已按最近邻排序，段间跳跃最小化\n")
         for idx, sp in enumerate(final_subpaths):
             f.write(f"\n# === 段 {idx+1}/{len(final_subpaths)} ({len(sp)} 点) ===\n")
             for (x, y) in sp:
