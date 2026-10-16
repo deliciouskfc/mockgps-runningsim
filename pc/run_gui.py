@@ -342,6 +342,13 @@ class MockGPSGUI(tk.Tk):
             width=120, height=48, command=self._on_stop,
             font=("Microsoft YaHei UI", 13, "bold"), radius=12)
         self.btn_stop.pack(side="left", padx=(0, 12))
+        # 继续运动按钮（段间暂停时显示）
+        self.btn_resume = GradientButton(
+            frm, "▶ 继续运动", "#059669", "#10b981",
+            width=140, height=48, command=self._on_resume,
+            font=("Microsoft YaHei UI", 13, "bold"), radius=12)
+        self.btn_resume.pack(side="left", padx=(0, 12))
+        self.btn_resume.pack_forget()
         # 状态显示
         status_box = ttk.Frame(frm)
         status_box.pack(side="left", fill="x", expand=True)
@@ -630,9 +637,37 @@ class MockGPSGUI(tk.Tk):
         self.procs.clear()
         self.var_status.set("状态：已停止")
         self.var_runtime.set("已运行：00:00:00")
+        self._hide_pause()
         if self.runtime_after_id:
             self.after_cancel(self.runtime_after_id)
             self.runtime_after_id = None
+
+    # ---------- 段间暂停交互 ----------
+
+    def _show_pause(self):
+        """显示继续运动按钮，状态改为已暂停。"""
+        try:
+            self.btn_resume.pack(side="left", padx=(0, 12))
+        except Exception:
+            pass
+        self.var_status.set("状态：已暂停（路径不连续，请点击继续运动）")
+
+    def _hide_pause(self):
+        """隐藏继续运动按钮。"""
+        try:
+            self.btn_resume.pack_forget()
+        except Exception:
+            pass
+
+    def _on_resume(self):
+        """用户点击继续运动：写 paused=0 让 mock_route 继续。"""
+        pause_file = os.path.join(HERE, "pause_state.txt")
+        try:
+            with open(pause_file, "w", encoding="utf-8") as f:
+                f.write("paused=0\n")
+            self._log("gui", "已发送继续信号，等待下一段...")
+        except Exception as e:
+            self._log("error", f"写入暂停状态失败：{e}")
 
     # ---------- 子进程读线程 ----------
 
@@ -671,6 +706,11 @@ class MockGPSGUI(tk.Tk):
             if inner in TAG_COLORS:
                 tag = inner
         self.log_text.insert("end", f"[{tag}] {msg}\n", tag)
+        # 检测段间暂停标记
+        if "路径不连续，已暂停" in msg:
+            self._show_pause()
+        elif "继续运动" in msg and "段" in msg:
+            self._hide_pause()
         # 限制行数
         lines = int(self.log_text.index("end-1c").split(".")[0])
         if lines > 5000:

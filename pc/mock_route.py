@@ -100,22 +100,27 @@ def bearing(p1: Point, p2: Point) -> float:
 # ---------- 路线解析 ----------
 
 def parse_route(path: str) -> list:
-    """根据扩展名解析路线，返回 Point 列表"""
+    """根据扩展名解析路线，返回 [Point] 或 段列表 [[Point], ...]。
+    含 PAUSE 标记时返回段列表（每段一个 Point 列表）。
+    """
     ext = os.path.splitext(path)[1].lower()
     if ext == ".gpx":
-        return parse_gpx(path)
+        return [parse_gpx(path)]
     if ext in (".kml", ".kmz"):
-        return parse_kml(path)
+        return [parse_kml(path)]
     return parse_txt(path)
 
 
-def parse_txt(path: str) -> list:
-    """解析纯文本路线，每行一个点：纬度,经度（逗号或空格分隔）"""
-    points = []
+def parse_txt(path: str):
+    """解析纯文本路线。含 PAUSE 标记时返回段列表，否则返回单层 Point 列表。"""
+    segments = [[]]
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
+                continue
+            if line.upper() == "PAUSE":
+                segments.append([])
                 continue
             parts = re.split(r"[,\s]+", line)
             if len(parts) < 2:
@@ -123,10 +128,14 @@ def parse_txt(path: str) -> list:
             try:
                 lat = float(parts[0])
                 lng = float(parts[1])
-                points.append(Point(lat, lng))
+                segments[-1].append(Point(lat, lng))
             except ValueError:
                 continue
-    return points
+    # 去掉空段
+    segments = [s for s in segments if len(s) >= 2]
+    if len(segments) == 1:
+        return segments[0]
+    return segments
 
 
 def parse_gpx(path: str) -> list:
@@ -216,6 +225,107 @@ def point_at_distance(points: list, cum: list, segs: list, dist: float) -> Point
 import socket
 
 SOCKET_PORT = 17890
+PAUSE_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pause_state.txt")
+
+
+def wait_for_resume(seg_idx: int, total_seg: int):
+    """段间暂停：写 pause_state.txt，等待 GUI 把 paused 改为 0。"""
+    with open(PAUSE_STATE_FILE, "w", encoding="utf-8") as f:
+        f.write(f"paused=1\nsegment={seg_idx}/{total_seg}\n")
+    print(f"\n>>> 路径不连续，已暂停（段 {seg_idx}/{total_seg}）。请在 GUI 点击「继续运动」<<<",
+          flush=True)
+    while True:
+        try:
+            with open(PAUSE_STATE_FILE, "r", encoding="utf-8") as f:
+                content = f.read()
+            if "paused=0" in content:
+                break
+        except Exception:
+            pass
+        time.sleep(0.3)
+    print(f">>> 继续运动（段 {seg_idx}/{total_seg}）<<<\n", flush=True)
+
+
+def run_segment(points, args, pusher, alt_sim, run_t0, wobble_amp, speed_base,
+                speed_var, seg_label=""):
+    """跑一段路线。返回 True 成功，False 推送失败。"""
+    cum, segs = build_segments(points)
+    total_dist = cum[-1]
+    speed_ms = args.speed_kmh * 1000 / 3600
+
+    # 复用外层的晃动/速度状态（跨段连续）
+    wobble_phase = run_segment._wobble_phase
+    wobble_rand = run_segment._wobble_rand
+    speed_drift = run_segment._speed_drift
+
+    dist = 0.0
+    last_point = None
+    t0 = time.time()
+    while dist < total_dist:
+        p = point_at_distance(points, cum, segs, dist)
+        b = bearing(last_point, p) if last_point else 0.0
+
+        # 速度随机波动（均值回归）
+        speed_drift += random.uniform(-1.0, 1.0) * speed_var * 0.15
+        speed_drift *= 0.85
+        speed_drift = max(-speed_var, min(speed_var, speed_drift))
+        speed_cur = speed_base + speed_drift
+        cur_ms = speed_cur * 1000 / 3600
+        cur_step_dist = cur_ms * args.interval
+        cadence = int(160 + (speed_cur - 10) * 4)
+        step_len = (speed_cur * 1000 / 60) / cadence
+
+        # 跑步左右晃动
+        d_lat = args.offset_lat
+        d_lng = args.offset_lng
+        if wobble_amp > 0:
+            step_freq_hz = cadence / 120.0
+            wobble_phase += args.interval * step_freq_hz * 2 * math.pi
+            wobble_rand += random.uniform(-0.3, 0.3) * wobble_amp * 0.1
+            wobble_rand *= 0.92
+            wobble_m = wobble_amp * math.sin(wobble_phase) + wobble_rand
+            perp_rad = math.radians(b + 90.0)
+            north_m = wobble_m * math.cos(perp_rad)
+            east_m = wobble_m * math.sin(perp_rad)
+            d_lat += north_m / 111320.0
+            d_lng += east_m / (111320.0 * math.cos(math.radians(p.lat)))
+
+        cur_alt = alt_sim.at(time.time() - run_t0)
+        ok = pusher.push(p.lat + d_lat, p.lng + d_lng, args.accuracy, b, cur_ms, cur_alt)
+        if not ok:
+            print("推送失败，停止。请检查设备连接与应用状态。")
+            # 保存状态
+            run_segment._wobble_phase = wobble_phase
+            run_segment._wobble_rand = wobble_rand
+            run_segment._speed_drift = speed_drift
+            return False
+        progress = dist / total_dist * 100
+        print(f"  [{seg_label}] 进度 {progress:5.1f}% ({dist:7.1f}/{total_dist:.1f}m)  "
+              f"速度={speed_cur:.1f}km/h 步频={cadence}spm 海拔={cur_alt:.1f}m")
+        last_point = p
+        dist += cur_step_dist
+        elapsed = time.time() - t0
+        expected = (dist / cur_step_dist) * args.interval
+        sleep_t = expected - elapsed
+        if sleep_t > 0:
+            time.sleep(sleep_t)
+
+    # 终点
+    p = points[-1]
+    end_alt = alt_sim.at(time.time() - run_t0)
+    pusher.push(p.lat, p.lng, args.accuracy, 0.0, speed_ms, end_alt)
+    print(f"  [{seg_label}] 到达段终点 lat={p.lat:.7f} lng={p.lng:.7f} 海拔={end_alt:.1f}m")
+
+    run_segment._wobble_phase = wobble_phase
+    run_segment._wobble_rand = wobble_rand
+    run_segment._speed_drift = speed_drift
+    return True
+
+
+# 跨段持续状态
+run_segment._wobble_phase = 0.0
+run_segment._wobble_rand = 0.0
+run_segment._speed_drift = 0.0
 
 
 def adb_base(device: str = None):
@@ -362,24 +472,35 @@ def main():
                         help="海拔随机波动幅度 ±米（默认5）。纯随机游走+均值回归，0=关闭海拔模拟")
     args = parser.parse_args()
 
-    points = parse_route(args.route)
-    if len(points) < 2:
-        print(f"[错误] 路线至少需要 2 个点，当前解析到 {len(points)} 个")
+    raw = parse_route(args.route)
+    # 统一为段列表
+    if isinstance(raw, list) and raw and isinstance(raw[0], Point):
+        segments = [raw]
+    else:
+        segments = raw
+    if not segments or any(len(s) < 2 for s in segments):
+        print(f"[错误] 路线至少需要每段 2 个点，当前解析到 {len(segments)} 段")
         sys.exit(1)
 
-    cum, segs = build_segments(points)
-    total_dist = cum[-1]
-    speed_ms = args.speed_kmh * 1000 / 3600
-    step_dist = speed_ms * args.interval
-    total_time = total_dist / speed_ms
+    # 重置跨段状态
+    run_segment._wobble_phase = 0.0
+    run_segment._wobble_rand = 0.0
+    run_segment._speed_drift = 0.0
 
-    print(f"路线点数: {len(points)}")
-    print(f"总距离: {total_dist:.1f} m ({total_dist / 1000:.2f} km)")
+    total_points = sum(len(s) for s in segments)
+    total_dist_all = sum(build_segments(s)[0][-1] for s in segments)
+    speed_ms = args.speed_kmh * 1000 / 3600
+    total_time = total_dist_all / speed_ms
+
+    print(f"路线段数: {len(segments)}  总点数: {total_points}")
+    print(f"总距离: {total_dist_all:.1f} m ({total_dist_all / 1000:.2f} km)")
     print(f"速度: {args.speed_kmh:.1f} km/h ({speed_ms:.2f} m/s)")
     print(f"预计单次耗时: {total_time:.0f} s ({total_time / 60:.1f} min)")
-    print(f"推送间隔: {args.interval}s，每次前进约 {step_dist:.2f} m")
+    print(f"推送间隔: {args.interval}s")
+    if len(segments) > 1:
+        print(f"路径不连续：段间需在 GUI 点击「继续运动」")
     if args.altitude_var > 0:
-        print(f"海拔模拟: 基准 {args.altitude_base:.1f}m，波动 ±{args.altitude_var:.1f}m（缓坡+随机游走）")
+        print(f"海拔模拟: 基准 {args.altitude_base:.1f}m，波动 ±{args.altitude_var:.1f}m")
 
     if not check_adb(args.device):
         sys.exit(2)
@@ -405,7 +526,8 @@ def main():
 
     pusher = SocketPusher(SOCKET_PORT)
     alt0 = alt_sim.at(0.0)
-    if not pusher.push(points[0].lat + args.offset_lat, points[0].lng + args.offset_lng,
+    first_pt = segments[0][0]
+    if not pusher.push(first_pt.lat + args.offset_lat, first_pt.lng + args.offset_lng,
                        args.accuracy, 0.0, speed_ms, alt0):
         print("[错误] 无法连接手机 MockGPS 服务，请确认 App 已打开且屏幕亮起")
         sys.exit(4)
@@ -433,70 +555,17 @@ def main():
             if loops > 0 and loop_idx >= loops:
                 break
             loop_idx += 1
-            print(f"===== 开始第 {loop_idx} 圈 =====")
-            dist = 0.0
-            last_point = None
-            t0 = time.time()
-            while dist < total_dist:
-                p = point_at_distance(points, cum, segs, dist)
-                b = bearing(last_point, p) if last_point else 0.0
-
-                # --- 速度随机波动（均值回归） ---
-                # 随机游走，但向基准速度回归
-                speed_drift += random.uniform(-1.0, 1.0) * speed_var * 0.15
-                speed_drift *= 0.85  # 回归系数
-                # 限制最大偏差
-                speed_drift = max(-speed_var, min(speed_var, speed_drift))
-                speed_cur = speed_base + speed_drift
-                cur_ms = speed_cur * 1000 / 3600
-                cur_step_dist = cur_ms * args.interval
-                # 步频计算（随速度变化）
-                cadence = int(160 + (speed_cur - 10) * 4)  # spm
-                step_len = (speed_cur * 1000 / 60) / cadence  # 米/步
-
-                # --- 模拟真人跑步左右晃动 ---
-                d_lat = args.offset_lat
-                d_lng = args.offset_lng
-                if wobble_amp > 0:
-                    # 步频相位跟随当前步频
-                    step_freq_hz = cadence / 120.0  # spm → Hz（左右各一步）
-                    wobble_phase += args.interval * step_freq_hz * 2 * math.pi
-                    # 随机漂移：均值回归的随机游走
-                    wobble_rand += random.uniform(-0.3, 0.3) * wobble_amp * 0.1
-                    wobble_rand *= 0.92  # 回归
-                    # 合成偏移量（米），垂直于行进方向
-                    wobble_m = wobble_amp * math.sin(wobble_phase) + wobble_rand
-                    # 垂直方向 = bearing + 90°
-                    perp_rad = math.radians(b + 90.0)
-                    north_m = wobble_m * math.cos(perp_rad)
-                    east_m = wobble_m * math.sin(perp_rad)
-                    d_lat += north_m / 111320.0
-                    d_lng += east_m / (111320.0 * math.cos(math.radians(p.lat)))
-
-                cur_alt = alt_sim.at(time.time() - run_t0)
-                ok = pusher.push(p.lat + d_lat, p.lng + d_lng, args.accuracy, b, cur_ms, cur_alt)
+            print(f"===== 开始第 {loop_idx} 轮（共 {len(segments)} 段）=====")
+            for si, seg in enumerate(segments):
+                label = f"{loop_idx}-{si+1}/{len(segments)}"
+                print(f"--- 段 {si+1}/{len(segments)} ({len(seg)} 点) ---")
+                ok = run_segment(seg, args, pusher, alt_sim, run_t0,
+                                 wobble_amp, speed_base, speed_var, label)
                 if not ok:
-                    print("推送失败，停止。请检查设备连接与应用状态。")
                     return
-                progress = dist / total_dist * 100
-                print(f"  [{loop_idx}] 进度 {progress:5.1f}%  ({dist:8.1f}/{total_dist:.1f}m)  "
-                      f"lat={p.lat:.7f} lng={p.lng:.7f} bearing={b:.1f}  "
-                      f"速度={speed_cur:.1f}km/h 步频={cadence}spm 步长={step_len:.2f}m 海拔={cur_alt:.1f}m")
-                last_point = p
-                dist += cur_step_dist
-                # 校准时间
-                elapsed = time.time() - t0
-                expected = (dist / cur_step_dist) * args.interval
-                sleep_t = expected - elapsed
-                if sleep_t > 0:
-                    time.sleep(sleep_t)
-
-            # 终点
-            p = points[-1]
-            end_alt = alt_sim.at(time.time() - run_t0)
-            pusher.push(p.lat, p.lng, args.accuracy, 0.0, speed_ms, end_alt)
-            print(f"  [{loop_idx}] 到达终点 lat={p.lat:.7f} lng={p.lng:.7f} 海拔={end_alt:.1f}m")
-
+                # 段间暂停（最后一段除外）
+                if si < len(segments) - 1:
+                    wait_for_resume(si + 1, len(segments))
             if args.once:
                 break
     except KeyboardInterrupt:
